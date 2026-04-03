@@ -46,8 +46,9 @@ class MarkdownHighlighter(QSyntaxHighlighter):
 
         italic_format = QTextCharFormat()
         italic_format.setFontItalic(True)
-        self.highlightingRules.append((QRegularExpression("\\*[^\\*]+\\*"), italic_format))
-        self.highlightingRules.append((QRegularExpression("_[^_]+_"), italic_format))
+        # Use negative lookbehind/lookahead to avoid matching the inside of bold (**)
+        self.highlightingRules.append((QRegularExpression("(?<!\\*)\\*[^\\*]+\\*(?!\\*)"), italic_format))
+        self.highlightingRules.append((QRegularExpression("(?<!_)_[^_]+_(?!_)"), italic_format))
 
         strike_format = QTextCharFormat()
         strike_format.setFontStrikeOut(True)
@@ -970,7 +971,16 @@ class NotepadDialog(QDialog):
         # Reset character format
         normal_char_fmt = QTextCharFormat()
         normal_char_fmt.setFontWeight(QFont.Normal)
-        normal_char_fmt.setFontPointSize(self.font().pointSize())
+
+        # In case self.content_edit.font() does not have a valid pointSize set (returns -1)
+        # default to 10 or the widget's font point size.
+        base_size = self.content_edit.font().pointSize()
+        if base_size <= 0:
+             base_size = self.font().pointSize()
+        if base_size <= 0:
+             base_size = 10
+
+        normal_char_fmt.setFontPointSize(base_size)
         cursor.setCharFormat(normal_char_fmt)
 
         # Apply special format to the first line (title)
@@ -985,7 +995,7 @@ class NotepadDialog(QDialog):
         cursor.movePosition(QTextCursor.EndOfLine, QTextCursor.KeepAnchor)
         title_char_fmt = QTextCharFormat()
         title_char_fmt.setFontWeight(QFont.Bold)
-        title_char_fmt.setFontPointSize(self.font().pointSize() + 2)
+        title_char_fmt.setFontPointSize(base_size + 2)
         cursor.setCharFormat(title_char_fmt)
         cursor.endEditBlock()
 
@@ -1012,8 +1022,12 @@ class NotepadDialog(QDialog):
 
     def apply_font(self, font):
         self.content_edit.setFont(font)
+        self.content_edit.document().setDefaultFont(font)
         if hasattr(self, 'highlighter'):
             self.highlighter.set_base_font(font)
+
+        # Re-apply the title style because default font changed
+        self.apply_title_style()
         font_info = {
             "family": font.family(),
             "pointSize": font.pointSize(),
