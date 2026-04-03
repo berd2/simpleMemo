@@ -996,9 +996,19 @@ class NotepadDialog(QDialog):
         self.content_edit.blockSignals(False)
 
     def show_font_dialog(self):
-        font, ok = QFontDialog.getFont(self.content_edit.font(), self, "Select Font")
-        if ok:
-            self.apply_font(font)
+        result = QFontDialog.getFont(self.content_edit.font(), self, "Select Font")
+        if len(result) == 2:
+            ok, font = result
+            if isinstance(ok, bool) and not isinstance(font, bool):
+                if ok:
+                    self.apply_font(font)
+            else:
+                font, ok = result
+                if ok:
+                    self.apply_font(font)
+        else:
+            if result:
+                self.apply_font(result[0])
 
     def apply_font(self, font):
         self.content_edit.setFont(font)
