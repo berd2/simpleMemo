@@ -4,7 +4,7 @@ import json
 import sqlite3
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QWidget, QListWidgetItem, QLabel,
                                QTextEdit, QPushButton, QLineEdit, QSplitter,  QCheckBox, QSizePolicy, QComboBox,
-                               QToolButton, QMenu, QMessageBox, QInputDialog, QFileDialog)
+                               QToolButton, QMenu, QMessageBox, QInputDialog, QFileDialog, QFontDialog)
 from PySide6.QtCore import Qt, QSize, QTimer, Signal, QRegularExpression, QEvent
 from PySide6.QtGui import QFont, QTextCursor, QTextCharFormat, QTextBlockFormat, QAction, QActionGroup, QSyntaxHighlighter, QColor, QMouseEvent
 from datetime import datetime
@@ -996,7 +996,7 @@ class NotepadDialog(QDialog):
         self.content_edit.blockSignals(False)
 
     def show_font_dialog(self):
-        ok, font = QFontDialog.getFont(self.content_edit.font(), self, "Select Font")
+        font, ok = QFontDialog.getFont(self.content_edit.font(), self, "Select Font")
         if ok:
             self.apply_font(font)
 
