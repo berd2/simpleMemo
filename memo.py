@@ -5,12 +5,72 @@ import sqlite3
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QWidget, QListWidgetItem, QLabel,
                                QTextEdit, QPushButton, QLineEdit, QSplitter,  QCheckBox, QSizePolicy, QComboBox,
                                QToolButton, QMenu, QMessageBox, QInputDialog, QFileDialog)
-from PySide6.QtCore import Qt, QSize, QTimer, Signal
-from PySide6.QtGui import QFont, QTextCursor, QTextCharFormat, QTextBlockFormat, QAction, QActionGroup
+from PySide6.QtCore import Qt, QSize, QTimer, Signal, QRegularExpression, QEvent
+from PySide6.QtGui import QFont, QTextCursor, QTextCharFormat, QTextBlockFormat, QAction, QActionGroup, QSyntaxHighlighter, QColor, QMouseEvent
 from datetime import datetime
 from memo_db import MemoDB
     
 DEFAULT_DATE_FORMAT = "%y/%m/%d"
+
+class MarkdownHighlighter(QSyntaxHighlighter):
+    def __init__(self, document, theme='light', base_font=None):
+        super().__init__(document)
+        self.theme = theme
+        self.base_font = base_font if base_font else QFont()
+        self._update_formats()
+
+    def set_theme(self, theme):
+        self.theme = theme
+        self._update_formats()
+        self.rehighlight()
+
+    def set_base_font(self, font):
+        self.base_font = font
+        self._update_formats()
+        self.rehighlight()
+
+    def _update_formats(self):
+        is_dark = self.theme == 'dark'
+
+        self.highlightingRules = []
+
+        header_format = QTextCharFormat()
+        header_format.setFontWeight(QFont.Bold)
+        header_format.setForeground(QColor("#4EA1DF") if is_dark else QColor("#0055A4"))
+        self.highlightingRules.append((QRegularExpression("^#{1,6}\\s+.*"), header_format))
+
+        bold_format = QTextCharFormat()
+        bold_format.setFontWeight(QFont.Bold)
+        self.highlightingRules.append((QRegularExpression("\\*\\*[^\\*]+\\*\\*"), bold_format))
+        self.highlightingRules.append((QRegularExpression("__[^_]+__"), bold_format))
+
+        italic_format = QTextCharFormat()
+        italic_format.setFontItalic(True)
+        self.highlightingRules.append((QRegularExpression("\\*[^\\*]+\\*"), italic_format))
+        self.highlightingRules.append((QRegularExpression("_[^_]+_"), italic_format))
+
+        strike_format = QTextCharFormat()
+        strike_format.setFontStrikeOut(True)
+        strike_format.setForeground(QColor("gray"))
+        self.highlightingRules.append((QRegularExpression("~~[^~]+~~"), strike_format))
+
+        code_format = QTextCharFormat()
+        code_format.setFontFamilies(["Courier New", "Courier", "Monospace"])
+        code_format.setBackground(QColor("#3A3A3A") if is_dark else QColor("#F0F0F0"))
+        code_format.setForeground(QColor("#CE9178") if is_dark else QColor("#A31515"))
+        self.highlightingRules.append((QRegularExpression("`[^`]+`"), code_format))
+
+        checkbox_format = QTextCharFormat()
+        checkbox_format.setForeground(QColor("#4CAF50"))
+        checkbox_format.setFontWeight(QFont.Bold)
+        self.highlightingRules.append((QRegularExpression("^\\s*[-*+]?\\s*\\[[ xX]\\]"), checkbox_format))
+
+    def highlightBlock(self, text):
+        for pattern, format in self.highlightingRules:
+            iterator = pattern.globalMatch(text)
+            while iterator.hasNext():
+                match = iterator.next()
+                self.setFormat(match.capturedStart(), match.capturedLength(), format)
 
 
 class StringTemplateInputDialog(QDialog):
@@ -103,6 +163,36 @@ class MemoListItemWidget(QWidget):
         self._update_importance_icon()
         self.importance_changed.emit(self.memo_id, self.is_important)
 
+class CheckboxTextEdit(QTextEdit):
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            cursor = self.cursorForPosition(event.pos())
+            block = cursor.block()
+            text = block.text()
+
+            # Simple regex to find checkbox in the line
+            regex = QRegularExpression(r"^(\s*[-*+]?\s*)\[([ xX])\]")
+            match = regex.match(text)
+
+            if match.hasMatch():
+                # Check if the click is roughly within the checkbox bounds
+                # We can approximate this by checking the column
+                start_idx = match.capturedStart(2)
+
+                # We add some tolerance
+                if start_idx - 1 <= cursor.positionInBlock() <= start_idx + 1:
+                    current_state = match.captured(2)
+                    new_state = 'x' if current_state == ' ' else ' '
+
+                    # Perform the replacement
+                    cursor.setPosition(block.position() + start_idx)
+                    cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)
+                    cursor.insertText(new_state)
+                    return # Event handled
+
+        super().mouseReleaseEvent(event)
+
+
 class NotepadDialog(QDialog):
     STRING_TEMPLATE_HELP_TEXT = """
         <b>Variables:</b><br>
@@ -193,7 +283,8 @@ class NotepadDialog(QDialog):
         self.new_memo_action_group = None
         self.string_template_action = None
         self._setup_menu()
-        self.content_edit = QTextEdit()
+        self.content_edit = CheckboxTextEdit()
+        self.highlighter = MarkdownHighlighter(self.content_edit.document(), self.current_theme, self.content_edit.font())
 
         # --- Layout ---
         main_layout = QHBoxLayout(self)
@@ -249,10 +340,19 @@ class NotepadDialog(QDialog):
         self.category_combo.lineEdit().returnPressed.connect(self.on_category_enter)
         self.menu_button.clicked.connect(self.show_menu_at_left)
 
-        last_memo_id, last_category, saved_theme, template = self._load_state()
+        self.auto_save_timer = QTimer(self)
+        self.auto_save_timer.setSingleShot(True)
+        self.auto_save_timer.setInterval(2000) # 2 seconds
+        self.auto_save_timer.timeout.connect(self.auto_save_trigger)
+        self.content_edit.textChanged.connect(self.reset_auto_save_timer)
+
+        last_memo_id, last_category, saved_theme, template, saved_font = self._load_state()
         self.current_memo_id = last_memo_id # Set the ID to be preserved
         self.new_memo_template = template
         self.apply_theme(saved_theme)
+        if saved_font:
+            self.apply_font(saved_font)
+        self.highlighter.set_theme(saved_theme)
         self._sync_new_memo_menu_checks()
 
         self.load_categories(set_current_text=last_category)
@@ -409,6 +509,14 @@ class NotepadDialog(QDialog):
         self._save_state()
         self._is_startup = False
 
+    def reset_auto_save_timer(self):
+        if not self.content_edit.signalsBlocked():
+            self.auto_save_timer.start()
+
+    def auto_save_trigger(self):
+        if self.is_dirty:
+            self.save_current_memo()
+
     def on_text_changed(self):
         if not self.content_edit.signalsBlocked():
             self.is_dirty = True
@@ -451,6 +559,9 @@ class NotepadDialog(QDialog):
         if self.show_full_menu:
             about_action = self.menu.addAction("About")
             about_action.triggered.connect(self.show_about_dialog)
+
+            font_action = self.menu.addAction("Font")
+            font_action.triggered.connect(self.show_font_dialog)
 
             theme_menu = self.menu.addMenu("Theme")
             self.theme_action_group = QActionGroup(self)
@@ -574,10 +685,12 @@ class NotepadDialog(QDialog):
             pass
         self.memo_db = MemoDB(new_path)
         self.db_path = new_path
-        last_memo_id, last_category, saved_theme, template = self._load_state()
+        last_memo_id, last_category, saved_theme, template, saved_font = self._load_state()
         self.current_memo_id = last_memo_id
         self.new_memo_template = template
         self.apply_theme(saved_theme)
+        if saved_font:
+            self.apply_font(saved_font)
         self._sync_new_memo_menu_checks()
         self.load_categories(set_current_text=last_category)
         self.load_memos()
@@ -882,12 +995,32 @@ class NotepadDialog(QDialog):
         self.content_edit.setTextCursor(cursor)
         self.content_edit.blockSignals(False)
 
+    def show_font_dialog(self):
+        ok, font = QFontDialog.getFont(self.content_edit.font(), self, "Select Font")
+        if ok:
+            self.apply_font(font)
+
+    def apply_font(self, font):
+        self.content_edit.setFont(font)
+        if hasattr(self, 'highlighter'):
+            self.highlighter.set_base_font(font)
+        font_info = {
+            "family": font.family(),
+            "pointSize": font.pointSize(),
+            "weight": font.weight(),
+            "italic": font.italic()
+        }
+        self.memo_db.save_state('font', json.dumps(font_info))
+
     def apply_theme(self, theme):
         theme = (theme or "light").lower()
         if theme not in ("light", "dark"):
             theme = "light"
 
         self.current_theme = theme
+        if hasattr(self, 'highlighter'):
+            self.highlighter.set_theme(theme)
+
         if theme == "dark":
             self.setStyleSheet("""
                 QWidget {
@@ -917,6 +1050,20 @@ class NotepadDialog(QDialog):
         last_memo_id = int(last_memo_id_str) if last_memo_id_str is not None else None
         last_category = self.memo_db.load_state('last_category', "")
         saved_theme = self.memo_db.load_state('theme', 'light')
+
+        saved_font = None
+        font_raw = self.memo_db.load_state('font')
+        if font_raw:
+            try:
+                font_info = json.loads(font_raw)
+                f = QFont(font_info.get("family", ""))
+                if "pointSize" in font_info: f.setPointSize(font_info["pointSize"])
+                if "weight" in font_info: f.setWeight(font_info["weight"])
+                if "italic" in font_info: f.setItalic(font_info["italic"])
+                saved_font = f
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         template_raw = self.memo_db.load_state('new_memo_template')
         template = {"mode": "date", "value": DEFAULT_DATE_FORMAT, "date_format": DEFAULT_DATE_FORMAT, "string_value": ""}
         if template_raw:
@@ -931,7 +1078,7 @@ class NotepadDialog(QDialog):
         template.setdefault('date_format', template.get('value') if template.get('mode') == 'date' else DEFAULT_DATE_FORMAT)
         if 'string_value' not in template:
             template['string_value'] = template.get('value', '') if template.get('mode') == 'string' else ""
-        return last_memo_id, last_category, saved_theme, template
+        return last_memo_id, last_category, saved_theme, template, saved_font
 
     def _save_state(self):
         if self.current_memo_id is not None:
