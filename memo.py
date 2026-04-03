@@ -47,8 +47,8 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         italic_format = QTextCharFormat()
         italic_format.setFontItalic(True)
         # Use negative lookbehind/lookahead to avoid matching the inside of bold (**)
-        self.highlightingRules.append((QRegularExpression("(?<!\\*)\\*[^\\*]+\\*(?!\\*)"), italic_format))
-        self.highlightingRules.append((QRegularExpression("(?<!_)_[^_]+_(?!_)"), italic_format))
+        self.highlightingRules.append((QRegularExpression("(?<!\\*)\\*(?!\\*)[^\\*]+\\*(?!\\*)"), italic_format))
+        self.highlightingRules.append((QRegularExpression("(?<!_)_(?!_)[^_]+_(?!_)"), italic_format))
 
         strike_format = QTextCharFormat()
         strike_format.setFontStrikeOut(True)
@@ -971,6 +971,8 @@ class NotepadDialog(QDialog):
         # Reset character format
         normal_char_fmt = QTextCharFormat()
         normal_char_fmt.setFontWeight(QFont.Normal)
+        normal_char_fmt.setFontItalic(False)
+        normal_char_fmt.setFontStrikeOut(False)
 
         # In case self.content_edit.font() does not have a valid pointSize set (returns -1)
         # default to 10 or the widget's font point size.
