@@ -960,30 +960,11 @@ class NotepadDialog(QDialog):
         cursor = self.content_edit.textCursor()
         cursor.beginEditBlock()
 
-        # Reset formats for the entire document
-        cursor.select(QTextCursor.Document)
-
-        # Reset block format
-        reset_block_fmt = QTextBlockFormat()
-        reset_block_fmt.setBottomMargin(0)
-        cursor.setBlockFormat(reset_block_fmt)
-
-        # Reset character format
-        normal_char_fmt = QTextCharFormat()
-        normal_char_fmt.setFontWeight(QFont.Normal)
-        normal_char_fmt.setFontItalic(False)
-        normal_char_fmt.setFontStrikeOut(False)
-
-        # In case self.content_edit.font() does not have a valid pointSize set (returns -1)
-        # default to 10 or the widget's font point size.
         base_size = self.content_edit.font().pointSize()
         if base_size <= 0:
              base_size = self.font().pointSize()
         if base_size <= 0:
              base_size = 10
-
-        normal_char_fmt.setFontPointSize(base_size)
-        cursor.setCharFormat(normal_char_fmt)
 
         # Apply special format to the first line (title)
         cursor.movePosition(QTextCursor.Start)
@@ -999,6 +980,22 @@ class NotepadDialog(QDialog):
         title_char_fmt.setFontWeight(QFont.Bold)
         title_char_fmt.setFontPointSize(base_size + 2)
         cursor.setCharFormat(title_char_fmt)
+
+        # Reset format for the second line and onwards to prevent title formatting from bleeding
+        # We only do this if there's more than one block to not break Enter
+        if self.content_edit.document().blockCount() > 1:
+            cursor.movePosition(QTextCursor.NextBlock)
+            reset_block_fmt = QTextBlockFormat()
+            reset_block_fmt.setBottomMargin(0)
+            cursor.setBlockFormat(reset_block_fmt)
+
+            normal_char_fmt = QTextCharFormat()
+            normal_char_fmt.setFontWeight(QFont.Normal)
+            normal_char_fmt.setFontItalic(False)
+            normal_char_fmt.setFontStrikeOut(False)
+            normal_char_fmt.setFontPointSize(base_size)
+            cursor.setCharFormat(normal_char_fmt)
+
         cursor.endEditBlock()
 
         # Restore original cursor position
@@ -1008,7 +1005,7 @@ class NotepadDialog(QDialog):
         self.content_edit.blockSignals(False)
 
     def show_font_dialog(self):
-        result = QFontDialog.getFont(self.content_edit.font(), self, "Select Font")
+        result = QFontDialog.getFont(self.content_edit.font(), self, "Select Font", QFontDialog.DontUseNativeDialog)
         if len(result) == 2:
             ok, font = result
             if isinstance(ok, bool) and not isinstance(font, bool):
