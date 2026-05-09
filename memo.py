@@ -4,7 +4,7 @@ import json
 import sqlite3
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QWidget, QListWidgetItem, QLabel,
                                QTextEdit, QPushButton, QLineEdit, QSplitter,  QCheckBox, QSizePolicy, QComboBox,
-                               QToolButton, QMenu, QMessageBox, QInputDialog, QFileDialog, QFontDialog)
+                               QToolButton, QMenu, QMessageBox, QInputDialog, QFileDialog, QFontDialog, QColorDialog)
 from PySide6.QtCore import Qt, QSize, QTimer, Signal, QRegularExpression, QEvent
 from PySide6.QtGui import QFont, QTextCursor, QTextCharFormat, QTextBlockFormat, QAction, QActionGroup, QSyntaxHighlighter, QColor, QMouseEvent
 from datetime import datetime
@@ -49,7 +49,10 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         bold_format.setFontWeight(QFont.Bold)
         # Groups: 1=start marker, 2=content, 3=end marker
         self.highlightingRules.append((QRegularExpression("(\\*\\*)([^\\*]+)(\\*\\*)"), bold_format))
-        self.highlightingRules.append((QRegularExpression("(__)([^_]+)(__)"), bold_format))
+
+        underline_format = QTextCharFormat()
+        underline_format.setFontUnderline(True)
+        self.highlightingRules.append((QRegularExpression("(__)([^_]+)(__)"), underline_format))
 
         italic_format = QTextCharFormat()
         italic_format.setFontItalic(True)
@@ -61,6 +64,8 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         strike_format.setFontStrikeOut(True)
         strike_format.setForeground(QColor("gray"))
         self.highlightingRules.append((QRegularExpression("(~~)([^~]+)(~~)"), strike_format))
+
+        self.color_pattern = QRegularExpression("(<color=)(#[0-9a-fA-F]{6})(>)(.*?)(</color>)")
 
         code_format = QTextCharFormat()
         code_format.setFontFamilies(["Courier New", "Courier", "Monospace"])
@@ -90,6 +95,20 @@ class MarkdownHighlighter(QSyntaxHighlighter):
                     self.setFormat(match.capturedStart(2), match.capturedLength(2), format)
                 else:
                     self.setFormat(match.capturedStart(), match.capturedLength(), format)
+
+        # Handle dynamic color formatting
+        color_iterator = self.color_pattern.globalMatch(text)
+        while color_iterator.hasNext():
+            match = color_iterator.next()
+            color_format = QTextCharFormat()
+            color_format.setForeground(QColor(match.captured(2)))
+
+            # Group 1 (<color=), 2 (#hex), 3 (>) -> map to marker format
+            self.setFormat(match.capturedStart(1), match.capturedLength(1) + match.capturedLength(2) + match.capturedLength(3), self.marker_format)
+            # Group 4 (content) -> color format
+            self.setFormat(match.capturedStart(4), match.capturedLength(4), color_format)
+            # Group 5 (</color>) -> map to marker format
+            self.setFormat(match.capturedStart(5), match.capturedLength(5), self.marker_format)
 
         # Handle dynamic header sizing
         header_match = self.header_pattern.match(text)
@@ -205,6 +224,67 @@ class MemoListItemWidget(QWidget):
         self.importance_changed.emit(self.memo_id, self.is_important)
 
 class CheckboxTextEdit(QTextEdit):
+    def insert_markdown(self, prefix, suffix=""):
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            text = cursor.selectedText()
+            cursor.insertText(f"{prefix}{text}{suffix}")
+        else:
+            cursor.insertText(f"{prefix}{suffix}")
+            if suffix:
+                cursor.movePosition(QTextCursor.Left, QTextCursor.MoveAnchor, len(suffix))
+                self.setTextCursor(cursor)
+
+    def toggle_heading(self):
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.StartOfBlock)
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        text = cursor.selectedText()
+
+        match = QRegularExpression("^(#{1,6})\\s+(.*)").match(text)
+        if match.hasMatch():
+            level = len(match.captured(1))
+            if level == 6:
+                cursor.insertText(match.captured(2)) # Remove header
+            else:
+                cursor.insertText(f"{'#' * (level + 1)} {match.captured(2)}")
+        else:
+            cursor.insertText(f"# {text}")
+
+    def format_color(self):
+        color = QColorDialog.getColor(Qt.black, self)
+        if color.isValid():
+            hex_color = color.name()
+            self.insert_markdown(f"<color={hex_color}>", "</color>")
+
+    def contextMenuEvent(self, event):
+        menu = self.createStandardContextMenu(event.pos())
+        menu.addSeparator()
+
+        # Add Markdown actions
+        bold_action = menu.addAction("**Bold**")
+        bold_action.triggered.connect(lambda: self.insert_markdown("**", "**"))
+
+        italic_action = menu.addAction("*Italic*")
+        italic_action.triggered.connect(lambda: self.insert_markdown("*", "*"))
+
+        underline_action = menu.addAction("__Underline__")
+        underline_action.triggered.connect(lambda: self.insert_markdown("__", "__"))
+
+        strike_action = menu.addAction("~~Strike~~")
+        strike_action.triggered.connect(lambda: self.insert_markdown("~~", "~~"))
+
+        code_action = menu.addAction("`Code`")
+        code_action.triggered.connect(lambda: self.insert_markdown("`", "`"))
+
+        heading_action = menu.addAction("Heading (#)")
+        heading_action.triggered.connect(self.toggle_heading)
+
+        color_action = menu.addAction("Color")
+        color_action.triggered.connect(self.format_color)
+
+        menu.exec(event.globalPos())
+
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             cursor = self.cursorForPosition(event.pos())
@@ -306,13 +386,36 @@ class NotepadDialog(QDialog):
         self.up_button.setFixedSize(28, 28)
         self.down_button = QPushButton("🡣")
         self.down_button.setToolTip("메모를 아래로 이동")
+        self.down_button.setFixedSize(28, 28)
         self.new_memo_button = QPushButton("🞧")
         self.new_memo_button.setToolTip("새 메모")
         self.new_memo_button.setFixedSize(40, 28)
         self.save_button = QPushButton("💾")
         self.save_button.setFixedSize(40, 28)
         self.save_button.setToolTip("메모 저장")
-        self.down_button.setFixedSize(28, 28)
+
+        # Toolbar formatting buttons
+        self.btn_bold = QPushButton("B")
+        self.btn_bold.setFixedSize(28, 28)
+        font_b = self.btn_bold.font()
+        font_b.setBold(True)
+        self.btn_bold.setFont(font_b)
+        self.btn_bold.setToolTip("Bold")
+
+        self.btn_underline = QPushButton("U")
+        self.btn_underline.setFixedSize(28, 28)
+        font_u = self.btn_underline.font()
+        font_u.setUnderline(True)
+        self.btn_underline.setFont(font_u)
+        self.btn_underline.setToolTip("Underline")
+
+        self.btn_heading = QPushButton("H")
+        self.btn_heading.setFixedSize(28, 28)
+        self.btn_heading.setToolTip("Heading")
+
+        self.btn_color = QPushButton("C")
+        self.btn_color.setFixedSize(28, 28)
+        self.btn_color.setToolTip("Text Color")
         
         self.timestamp_label = QLabel()
         self.menu_button = QToolButton()
@@ -356,6 +459,13 @@ class NotepadDialog(QDialog):
         editor_header.addWidget(self.down_button)
         editor_header.addWidget(self.new_memo_button)
         editor_header.addWidget(self.save_button)
+
+        editor_header.addSpacing(10)
+        editor_header.addWidget(self.btn_bold)
+        editor_header.addWidget(self.btn_underline)
+        editor_header.addWidget(self.btn_heading)
+        editor_header.addWidget(self.btn_color)
+
         editor_header.addStretch()
         editor_header.addWidget(self.timestamp_label)
         editor_header.addWidget(self.menu_button)
@@ -377,6 +487,12 @@ class NotepadDialog(QDialog):
         self.is_dirty = False
         self.memo_list_widget.currentItemChanged.connect(self.on_memo_selected)
         self.save_button.clicked.connect(self.save_current_memo)
+
+        self.btn_bold.clicked.connect(lambda: self.content_edit.insert_markdown("**", "**"))
+        self.btn_underline.clicked.connect(lambda: self.content_edit.insert_markdown("__", "__"))
+        self.btn_heading.clicked.connect(self.content_edit.toggle_heading)
+        self.btn_color.clicked.connect(self.content_edit.format_color)
+
         self.content_edit.textChanged.connect(self.on_text_changed)
         self.content_edit.textChanged.connect(self._on_content_text_changed)
         self.category_combo.currentTextChanged.connect(self.on_category_changed)
