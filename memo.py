@@ -34,44 +34,84 @@ class MarkdownHighlighter(QSyntaxHighlighter):
 
         self.highlightingRules = []
 
-        header_format = QTextCharFormat()
-        header_format.setFontWeight(QFont.Bold)
-        header_format.setForeground(QColor("#4EA1DF") if is_dark else QColor("#0055A4"))
-        self.highlightingRules.append((QRegularExpression("^#{1,6}\\s+.*"), header_format))
+        # Format for dimming syntax markers
+        self.marker_format = QTextCharFormat()
+        self.marker_format.setForeground(QColor("#808080") if is_dark else QColor("#C0C0C0"))
+        self.marker_format.setFontWeight(QFont.Normal)
+        self.marker_format.setFontItalic(False)
+        self.marker_format.setFontStrikeOut(False)
+
+        # We will handle headers specially in highlightBlock because we want dynamic sizing based on '#' count
+        self.header_color = QColor("#4EA1DF") if is_dark else QColor("#0055A4")
+        self.header_pattern = QRegularExpression("^(#{1,6})(\\s+)(.*)")
 
         bold_format = QTextCharFormat()
         bold_format.setFontWeight(QFont.Bold)
-        self.highlightingRules.append((QRegularExpression("\\*\\*[^\\*]+\\*\\*"), bold_format))
-        self.highlightingRules.append((QRegularExpression("__[^_]+__"), bold_format))
+        # Groups: 1=start marker, 2=content, 3=end marker
+        self.highlightingRules.append((QRegularExpression("(\\*\\*)([^\\*]+)(\\*\\*)"), bold_format))
+        self.highlightingRules.append((QRegularExpression("(__)([^_]+)(__)"), bold_format))
 
         italic_format = QTextCharFormat()
         italic_format.setFontItalic(True)
         # Use negative lookbehind/lookahead to avoid matching the inside of bold (**)
-        self.highlightingRules.append((QRegularExpression("(?<!\\*)\\*(?!\\*)[^\\*]+\\*(?!\\*)"), italic_format))
-        self.highlightingRules.append((QRegularExpression("(?<!_)_(?!_)[^_]+_(?!_)"), italic_format))
+        self.highlightingRules.append((QRegularExpression("(?<!\\*)(\\*)(?!\\*)([^\\*]+)(?<!\\*)(\\*)(?!\\*)"), italic_format))
+        self.highlightingRules.append((QRegularExpression("(?<!_)(_)(?!_)([^_]+)(?<!_)(_)(?!_)"), italic_format))
 
         strike_format = QTextCharFormat()
         strike_format.setFontStrikeOut(True)
         strike_format.setForeground(QColor("gray"))
-        self.highlightingRules.append((QRegularExpression("~~[^~]+~~"), strike_format))
+        self.highlightingRules.append((QRegularExpression("(~~)([^~]+)(~~)"), strike_format))
 
         code_format = QTextCharFormat()
         code_format.setFontFamilies(["Courier New", "Courier", "Monospace"])
         code_format.setBackground(QColor("#3A3A3A") if is_dark else QColor("#F0F0F0"))
         code_format.setForeground(QColor("#CE9178") if is_dark else QColor("#A31515"))
-        self.highlightingRules.append((QRegularExpression("`[^`]+`"), code_format))
+        self.highlightingRules.append((QRegularExpression("(`)([^`]+)(`)"), code_format))
 
         checkbox_format = QTextCharFormat()
         checkbox_format.setForeground(QColor("#4CAF50"))
         checkbox_format.setFontWeight(QFont.Bold)
+        # Group 1 = markers (- [ ]), Group 2 (if any) we don't dim checkbox itself, so we keep it as is
         self.highlightingRules.append((QRegularExpression("^\\s*[-*+]?\\s*\\[[ xX]\\]"), checkbox_format))
 
     def highlightBlock(self, text):
+        # Apply standard rules
         for pattern, format in self.highlightingRules:
             iterator = pattern.globalMatch(text)
             while iterator.hasNext():
                 match = iterator.next()
-                self.setFormat(match.capturedStart(), match.capturedLength(), format)
+
+                # If there are 3 captured groups, it means we have: (start_marker)(content)(end_marker)
+                if match.lastCapturedIndex() == 3:
+                    # format the markers (group 1 and 3) with marker_format
+                    self.setFormat(match.capturedStart(1), match.capturedLength(1), self.marker_format)
+                    self.setFormat(match.capturedStart(3), match.capturedLength(3), self.marker_format)
+                    # format the content (group 2) with the actual format
+                    self.setFormat(match.capturedStart(2), match.capturedLength(2), format)
+                else:
+                    self.setFormat(match.capturedStart(), match.capturedLength(), format)
+
+        # Handle dynamic header sizing
+        header_match = self.header_pattern.match(text)
+        if header_match.hasMatch():
+            level = len(header_match.captured(1))
+            header_format = QTextCharFormat()
+            header_format.setFontWeight(QFont.Bold)
+            header_format.setForeground(self.header_color)
+
+            # Base font size calculation
+            base_size = self.base_font.pointSize()
+            if base_size <= 0:
+                base_size = 10
+
+            # h1 is base + 8, h2 is base + 6, h3 is base + 4, etc.
+            size_offset = max(0, 8 - ((level - 1) * 2))
+            header_format.setFontPointSize(base_size + size_offset)
+
+            # Apply marker format to '#'
+            self.setFormat(header_match.capturedStart(1), header_match.capturedLength(1), self.marker_format)
+            # Apply header format to content (group 3)
+            self.setFormat(header_match.capturedStart(3), header_match.capturedLength(3), header_format)
 
 
 class StringTemplateInputDialog(QDialog):
