@@ -972,6 +972,7 @@ class NotepadDialog(QDialog):
         # Block format for title (add space after)
         title_block_fmt = QTextBlockFormat()
         title_block_fmt.setBottomMargin(8)
+        title_block_fmt.setLineHeight(150.0, QTextBlockFormat.ProportionalHeight.value)
         cursor.setBlockFormat(title_block_fmt)
 
         # Character format for title (bold, larger font)
@@ -987,6 +988,7 @@ class NotepadDialog(QDialog):
             cursor.movePosition(QTextCursor.NextBlock)
             reset_block_fmt = QTextBlockFormat()
             reset_block_fmt.setBottomMargin(0)
+            reset_block_fmt.setLineHeight(150.0, QTextBlockFormat.ProportionalHeight.value)
             cursor.setBlockFormat(reset_block_fmt)
 
             normal_char_fmt = QTextCharFormat()
@@ -1059,9 +1061,16 @@ class NotepadDialog(QDialog):
                     color: #f0f0f0;
                     border: 1px solid #444444;
                 }
+                QTextEdit {
+                    padding: 10px;
+                }
             """)
         else:
-            self.setStyleSheet("")
+            self.setStyleSheet("""
+                QTextEdit {
+                    padding: 10px;
+                }
+            """)
         if hasattr(self, "theme_actions"):
             for key, action in self.theme_actions.items():
                 action.setChecked(key == self.current_theme)
