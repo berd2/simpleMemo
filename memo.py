@@ -227,6 +227,7 @@ class CheckboxTextEdit(QTextEdit):
                 self.setTextCursor(cursor)
 
         cursor.endEditBlock()
+        self.setFocus()
 
     def toggle_heading(self):
         cursor = self.textCursor()
@@ -245,6 +246,7 @@ class CheckboxTextEdit(QTextEdit):
         else:
             cursor.insertText(f"# {text}")
         cursor.endEditBlock()
+        self.setFocus()
 
     def contextMenuEvent(self, event):
         menu = self.createStandardContextMenu(event.pos())
@@ -382,6 +384,7 @@ class NotepadDialog(QDialog):
 
         # Toolbar formatting buttons
         self.btn_bold = QPushButton("B")
+        self.btn_bold.setFocusPolicy(Qt.NoFocus)
         self.btn_bold.setFixedSize(28, 28)
         font_b = self.btn_bold.font()
         font_b.setBold(True)
@@ -389,6 +392,7 @@ class NotepadDialog(QDialog):
         self.btn_bold.setToolTip("Bold")
 
         self.btn_underline = QPushButton("U")
+        self.btn_underline.setFocusPolicy(Qt.NoFocus)
         self.btn_underline.setFixedSize(28, 28)
         font_u = self.btn_underline.font()
         font_u.setUnderline(True)
@@ -396,6 +400,7 @@ class NotepadDialog(QDialog):
         self.btn_underline.setToolTip("Underline")
 
         self.btn_heading = QPushButton("H")
+        self.btn_heading.setFocusPolicy(Qt.NoFocus)
         self.btn_heading.setFixedSize(28, 28)
         self.btn_heading.setToolTip("Heading")
         
@@ -443,10 +448,15 @@ class NotepadDialog(QDialog):
         editor_header.addWidget(self.save_button)
 
         editor_header.addSpacing(10)
-        editor_header.addWidget(self.btn_bold)
-        editor_header.addWidget(self.btn_underline)
-        editor_header.addWidget(self.btn_heading)
 
+        # Group formatting buttons closer together
+        format_layout = QHBoxLayout()
+        format_layout.setSpacing(2)
+        format_layout.addWidget(self.btn_bold)
+        format_layout.addWidget(self.btn_underline)
+        format_layout.addWidget(self.btn_heading)
+
+        editor_header.addLayout(format_layout)
         editor_header.addStretch()
         editor_header.addWidget(self.timestamp_label)
         editor_header.addWidget(self.menu_button)
