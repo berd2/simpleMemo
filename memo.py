@@ -225,6 +225,7 @@ class NotepadDialog(QDialog):
         self._is_startup = True
         self.undo_stack = []
         self.current_theme = 'light'
+        self.current_line_height = 150.0
         self.new_memo_template = {"mode": "date", "value": DEFAULT_DATE_FORMAT, "date_format": DEFAULT_DATE_FORMAT, "string_value": ""}
         self.date_format_options = [
             ("YY/MM/DD", "%y/%m/%d"),
@@ -281,6 +282,7 @@ class NotepadDialog(QDialog):
         self.menu_button.setPopupMode(QToolButton.InstantPopup)
         self.menu = QMenu(self)
         self.theme_actions = {}
+        self.line_height_actions = {}
         self.new_memo_action_group = None
         self.string_template_action = None
         self._setup_menu()
@@ -347,9 +349,10 @@ class NotepadDialog(QDialog):
         self.auto_save_timer.timeout.connect(self.auto_save_trigger)
         self.content_edit.textChanged.connect(self.reset_auto_save_timer)
 
-        last_memo_id, last_category, saved_theme, template, saved_font = self._load_state()
+        last_memo_id, last_category, saved_theme, saved_line_height, template, saved_font = self._load_state()
         self.current_memo_id = last_memo_id # Set the ID to be preserved
         self.new_memo_template = template
+        self.apply_line_height(saved_line_height)
         self.apply_theme(saved_theme)
         if saved_font:
             self.apply_font(saved_font)
@@ -554,8 +557,10 @@ class NotepadDialog(QDialog):
     def _setup_menu(self):
         self.menu.clear()
         self.theme_actions = {}
+        self.line_height_actions = {}
         self.date_format_actions = {}
         self.theme_action_group = None
+        self.line_height_action_group = None
 
         if self.show_full_menu:
             about_action = self.menu.addAction("About")
@@ -574,6 +579,19 @@ class NotepadDialog(QDialog):
                 self.theme_action_group.addAction(action)
                 theme_menu.addAction(action)
                 self.theme_actions[key] = action
+
+            line_height_menu = self.menu.addMenu("Line Spacing")
+            self.line_height_action_group = QActionGroup(self)
+            self.line_height_action_group.setExclusive(True)
+            for label, value in (("100%", 100.0), ("120%", 120.0), ("150%", 150.0), ("200%", 200.0)):
+                action = QAction(label, self)
+                action.setCheckable(True)
+                if self.current_line_height == value:
+                    action.setChecked(True)
+                action.triggered.connect(lambda checked, v=value: self.apply_line_height(v))
+                self.line_height_action_group.addAction(action)
+                line_height_menu.addAction(action)
+                self.line_height_actions[value] = action
 
         load_action = self.menu.addAction("Load DB")
         load_action.triggered.connect(self.load_db_file)
@@ -686,9 +704,10 @@ class NotepadDialog(QDialog):
             pass
         self.memo_db = MemoDB(new_path)
         self.db_path = new_path
-        last_memo_id, last_category, saved_theme, template, saved_font = self._load_state()
+        last_memo_id, last_category, saved_theme, saved_line_height, template, saved_font = self._load_state()
         self.current_memo_id = last_memo_id
         self.new_memo_template = template
+        self.apply_line_height(saved_line_height)
         self.apply_theme(saved_theme)
         if saved_font:
             self.apply_font(saved_font)
@@ -972,7 +991,7 @@ class NotepadDialog(QDialog):
         # Block format for title (add space after)
         title_block_fmt = QTextBlockFormat()
         title_block_fmt.setBottomMargin(8)
-        title_block_fmt.setLineHeight(150.0, QTextBlockFormat.ProportionalHeight.value)
+        title_block_fmt.setLineHeight(self.current_line_height, QTextBlockFormat.ProportionalHeight.value)
         cursor.setBlockFormat(title_block_fmt)
 
         # Character format for title (bold, larger font)
@@ -988,7 +1007,7 @@ class NotepadDialog(QDialog):
             cursor.movePosition(QTextCursor.NextBlock)
             reset_block_fmt = QTextBlockFormat()
             reset_block_fmt.setBottomMargin(0)
-            reset_block_fmt.setLineHeight(150.0, QTextBlockFormat.ProportionalHeight.value)
+            reset_block_fmt.setLineHeight(self.current_line_height, QTextBlockFormat.ProportionalHeight.value)
             cursor.setBlockFormat(reset_block_fmt)
 
             normal_char_fmt = QTextCharFormat()
@@ -1036,6 +1055,34 @@ class NotepadDialog(QDialog):
             "italic": font.italic()
         }
         self.memo_db.save_state('font', json.dumps(font_info))
+
+    def apply_line_height(self, line_height):
+        try:
+            self.current_line_height = float(line_height)
+        except ValueError:
+            self.current_line_height = 150.0
+
+        if hasattr(self, "line_height_actions"):
+            for value, action in self.line_height_actions.items():
+                action.setChecked(value == self.current_line_height)
+
+        # Apply to entire document
+        cursor = self.content_edit.textCursor()
+        original_pos = cursor.position()
+        self.content_edit.blockSignals(True)
+        cursor.beginEditBlock()
+        cursor.select(QTextCursor.Document)
+        fmt = QTextBlockFormat()
+        fmt.setLineHeight(self.current_line_height, QTextBlockFormat.ProportionalHeight.value)
+        cursor.mergeBlockFormat(fmt)
+        cursor.endEditBlock()
+
+        cursor.clearSelection()
+        cursor.setPosition(original_pos)
+        self.content_edit.setTextCursor(cursor)
+        self.content_edit.blockSignals(False)
+        self.apply_title_style()
+        self.memo_db.save_state('line_height', str(self.current_line_height))
 
     def apply_theme(self, theme):
         theme = (theme or "light").lower()
@@ -1110,13 +1157,19 @@ class NotepadDialog(QDialog):
         template.setdefault('date_format', template.get('value') if template.get('mode') == 'date' else DEFAULT_DATE_FORMAT)
         if 'string_value' not in template:
             template['string_value'] = template.get('value', '') if template.get('mode') == 'string' else ""
-        return last_memo_id, last_category, saved_theme, template, saved_font
+        try:
+            saved_line_height = float(self.memo_db.load_state('line_height', '150.0'))
+        except ValueError:
+            saved_line_height = 150.0
+
+        return last_memo_id, last_category, saved_theme, saved_line_height, template, saved_font
 
     def _save_state(self):
         if self.current_memo_id is not None:
             self.memo_db.save_state('last_memo_id', self.current_memo_id)
         self.memo_db.save_state('last_category', self.category_combo.currentText())
         self.memo_db.save_state('theme', self.current_theme)
+        self.memo_db.save_state('line_height', str(self.current_line_height))
         self.memo_db.save_state('new_memo_template', json.dumps(self.new_memo_template))
 
     def closeEvent(self, event):
