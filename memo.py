@@ -4,7 +4,7 @@ import json
 import sqlite3
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QWidget, QListWidgetItem, QLabel,
                                QTextEdit, QPushButton, QLineEdit, QSplitter,  QCheckBox, QSizePolicy, QComboBox,
-                               QToolButton, QMenu, QMessageBox, QInputDialog, QFileDialog, QFontDialog, QColorDialog)
+                               QToolButton, QMenu, QMessageBox, QInputDialog, QFileDialog, QFontDialog)
 from PySide6.QtCore import Qt, QSize, QTimer, Signal, QRegularExpression, QEvent
 from PySide6.QtGui import QFont, QTextCursor, QTextCharFormat, QTextBlockFormat, QAction, QActionGroup, QSyntaxHighlighter, QColor, QMouseEvent
 from datetime import datetime
@@ -65,8 +65,6 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         strike_format.setForeground(QColor("gray"))
         self.highlightingRules.append((QRegularExpression("(~~)([^~]+)(~~)"), strike_format))
 
-        self.color_pattern = QRegularExpression("(<color=)(#[0-9a-fA-F]{6})(>)(.*?)(</color>)")
-
         code_format = QTextCharFormat()
         code_format.setFontFamilies(["Courier New", "Courier", "Monospace"])
         code_format.setBackground(QColor("#3A3A3A") if is_dark else QColor("#F0F0F0"))
@@ -95,20 +93,6 @@ class MarkdownHighlighter(QSyntaxHighlighter):
                     self.setFormat(match.capturedStart(2), match.capturedLength(2), format)
                 else:
                     self.setFormat(match.capturedStart(), match.capturedLength(), format)
-
-        # Handle dynamic color formatting
-        color_iterator = self.color_pattern.globalMatch(text)
-        while color_iterator.hasNext():
-            match = color_iterator.next()
-            color_format = QTextCharFormat()
-            color_format.setForeground(QColor(match.captured(2)))
-
-            # Group 1 (<color=), 2 (#hex), 3 (>) -> map to marker format
-            self.setFormat(match.capturedStart(1), match.capturedLength(1) + match.capturedLength(2) + match.capturedLength(3), self.marker_format)
-            # Group 4 (content) -> color format
-            self.setFormat(match.capturedStart(4), match.capturedLength(4), color_format)
-            # Group 5 (</color>) -> map to marker format
-            self.setFormat(match.capturedStart(5), match.capturedLength(5), self.marker_format)
 
         # Handle dynamic header sizing
         header_match = self.header_pattern.match(text)
@@ -226,8 +210,15 @@ class MemoListItemWidget(QWidget):
 class CheckboxTextEdit(QTextEdit):
     def insert_markdown(self, prefix, suffix=""):
         cursor = self.textCursor()
+
+        # Important: clear selection if we're replacing, otherwise cursor.insertText
+        # breaks the block in weird ways, although PySide usually handles it.
+        # But we must begin edit block before modifications.
+        cursor.beginEditBlock()
+
         if cursor.hasSelection():
             text = cursor.selectedText()
+            cursor.removeSelectedText()
             cursor.insertText(f"{prefix}{text}{suffix}")
         else:
             cursor.insertText(f"{prefix}{suffix}")
@@ -235,8 +226,11 @@ class CheckboxTextEdit(QTextEdit):
                 cursor.movePosition(QTextCursor.Left, QTextCursor.MoveAnchor, len(suffix))
                 self.setTextCursor(cursor)
 
+        cursor.endEditBlock()
+
     def toggle_heading(self):
         cursor = self.textCursor()
+        cursor.beginEditBlock()
         cursor.movePosition(QTextCursor.StartOfBlock)
         cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
         text = cursor.selectedText()
@@ -250,12 +244,7 @@ class CheckboxTextEdit(QTextEdit):
                 cursor.insertText(f"{'#' * (level + 1)} {match.captured(2)}")
         else:
             cursor.insertText(f"# {text}")
-
-    def format_color(self):
-        color = QColorDialog.getColor(Qt.black, self)
-        if color.isValid():
-            hex_color = color.name()
-            self.insert_markdown(f"<color={hex_color}>", "</color>")
+        cursor.endEditBlock()
 
     def contextMenuEvent(self, event):
         menu = self.createStandardContextMenu(event.pos())
@@ -279,9 +268,6 @@ class CheckboxTextEdit(QTextEdit):
 
         heading_action = menu.addAction("Heading (#)")
         heading_action.triggered.connect(self.toggle_heading)
-
-        color_action = menu.addAction("Color")
-        color_action.triggered.connect(self.format_color)
 
         menu.exec(event.globalPos())
 
@@ -412,10 +398,6 @@ class NotepadDialog(QDialog):
         self.btn_heading = QPushButton("H")
         self.btn_heading.setFixedSize(28, 28)
         self.btn_heading.setToolTip("Heading")
-
-        self.btn_color = QPushButton("C")
-        self.btn_color.setFixedSize(28, 28)
-        self.btn_color.setToolTip("Text Color")
         
         self.timestamp_label = QLabel()
         self.menu_button = QToolButton()
@@ -464,7 +446,6 @@ class NotepadDialog(QDialog):
         editor_header.addWidget(self.btn_bold)
         editor_header.addWidget(self.btn_underline)
         editor_header.addWidget(self.btn_heading)
-        editor_header.addWidget(self.btn_color)
 
         editor_header.addStretch()
         editor_header.addWidget(self.timestamp_label)
@@ -491,7 +472,6 @@ class NotepadDialog(QDialog):
         self.btn_bold.clicked.connect(lambda: self.content_edit.insert_markdown("**", "**"))
         self.btn_underline.clicked.connect(lambda: self.content_edit.insert_markdown("__", "__"))
         self.btn_heading.clicked.connect(self.content_edit.toggle_heading)
-        self.btn_color.clicked.connect(self.content_edit.format_color)
 
         self.content_edit.textChanged.connect(self.on_text_changed)
         self.content_edit.textChanged.connect(self._on_content_text_changed)
