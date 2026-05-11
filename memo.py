@@ -134,7 +134,8 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         is_dark = self.theme.lower() in ["dark", "default dark", "charcoal", "obsidian", "navy", "midnight blue", "brown", "dark chocolate", "deep brown"]
         self.highlightingRules = []
         self.marker_format = QTextCharFormat()
-        self.marker_format.setForeground(QColor("#808080") if is_dark else QColor("#C0C0C0"))
+        self.marker_format.setForeground(QColor("transparent"))
+        self.marker_format.setFontPointSize(0.1)
         self.header_color = QColor("#4EA1DF") if is_dark else QColor("#0055A4")
         self.header_pattern = QRegularExpression("^(#{1,6})(\\s+)(.*)")
         bold_fmt = QTextCharFormat()
