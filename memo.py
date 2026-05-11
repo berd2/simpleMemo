@@ -135,7 +135,7 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         self.highlightingRules = []
         self.marker_format = QTextCharFormat()
         self.marker_format.setForeground(QColor("transparent"))
-        self.marker_format.setFontPointSize(0.1)
+        self.marker_format.setFontPointSize(1)
         self.header_color = QColor("#4EA1DF") if is_dark else QColor("#0055A4")
         self.header_pattern = QRegularExpression("^(#{1,6})(\\s+)(.*)")
         bold_fmt = QTextCharFormat()
@@ -253,6 +253,28 @@ class CheckboxTextEdit(QTextEdit):
         cursor.endEditBlock()
         self.setFocus()
 
+    def toggle_list(self) -> None:
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        cursor.movePosition(QTextCursor.StartOfBlock)
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        text = cursor.selectedText()
+        # Toggle bullet point (- )
+        match = QRegularExpression("^(\\s*)-\\s+(.*)").match(text)
+        if match.hasMatch():
+            cursor.insertText(f"{match.captured(1)}{match.captured(2)}")
+        else:
+            # Check if it has spaces
+            space_match = QRegularExpression("^(\\s*)(.*)").match(text)
+            if space_match.hasMatch() and space_match.captured(2):
+                cursor.insertText(f"{space_match.captured(1)}- {space_match.captured(2)}")
+            elif text:
+                cursor.insertText(f"- {text}")
+            else:
+                cursor.insertText("- ")
+        cursor.endEditBlock()
+        self.setFocus()
+
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         menu = self.createStandardContextMenu(event.pos())
         menu.addSeparator()
@@ -359,6 +381,7 @@ class NotepadDialog(QDialog):
         self.btn_strike = QPushButton("S"); self.btn_strike.setFixedSize(28, 28); f_s = self.btn_strike.font(); f_s.setStrikeOut(True); self.btn_strike.setFont(f_s)
         self.btn_code = QPushButton("<>"); self.btn_code.setFixedSize(28, 28)
         self.btn_heading = QPushButton("H"); self.btn_heading.setFixedSize(28, 28)
+        self.btn_list = QPushButton("•"); self.btn_list.setFixedSize(28, 28)
         self.timestamp_label = QLabel(); self.timestamp_label.hide(); self.menu_button = QToolButton(); self.menu_button.setText("☰"); self.menu_button.setFixedSize(28, 28); self.menu_button.setPopupMode(QToolButton.InstantPopup)
         self.menu = QMenu(self); self.content_edit = CheckboxTextEdit(); self.highlighter = MarkdownHighlighter(self.content_edit.document())
 
@@ -376,7 +399,7 @@ class NotepadDialog(QDialog):
         left_layout.addWidget(self.category_combo); left_layout.addWidget(self.memo_list_widget)
         right_widget = QWidget(); right_layout = QVBoxLayout(right_widget); right_layout.setContentsMargins(0, 0, 0, 0)
         e_header = QHBoxLayout(); e_header.addWidget(self.up_button); e_header.addWidget(self.down_button); e_header.addWidget(self.new_memo_button); e_header.addWidget(self.save_button); e_header.addSpacing(8)
-        f_layout = QHBoxLayout(); f_layout.setSpacing(2); f_layout.addWidget(self.btn_bold); f_layout.addWidget(self.btn_italic); f_layout.addWidget(self.btn_underline); f_layout.addWidget(self.btn_strike); f_layout.addWidget(self.btn_code); f_layout.addWidget(self.btn_heading); e_header.addLayout(f_layout); e_header.addStretch(); e_header.addWidget(self.menu_button)
+        f_layout = QHBoxLayout(); f_layout.setSpacing(2); f_layout.addWidget(self.btn_bold); f_layout.addWidget(self.btn_italic); f_layout.addWidget(self.btn_underline); f_layout.addWidget(self.btn_strike); f_layout.addWidget(self.btn_code); f_layout.addWidget(self.btn_heading); f_layout.addWidget(self.btn_list); e_header.addLayout(f_layout); e_header.addStretch(); e_header.addWidget(self.menu_button)
         right_layout.addLayout(e_header); right_layout.addWidget(self.content_edit)
         splitter.addWidget(left_widget); splitter.addWidget(right_widget); splitter.setSizes([210, 590]); main_layout.addWidget(splitter)
 
@@ -384,7 +407,7 @@ class NotepadDialog(QDialog):
         self.search_button.clicked.connect(self.filter_memos); self.search_edit.returnPressed.connect(self.filter_memos)
         self.new_memo_button.clicked.connect(self.create_new_memo); self.up_button.clicked.connect(self.move_memo_up); self.down_button.clicked.connect(self.move_memo_down); self.undo_button.clicked.connect(self.undo_delete)
         self.memo_list_widget.currentItemChanged.connect(self.on_memo_selected); self.save_button.clicked.connect(self.save_current_memo)
-        self.btn_bold.clicked.connect(lambda: self.content_edit.insert_markdown("**", "**")); self.btn_italic.clicked.connect(lambda: self.content_edit.insert_markdown("*", "*")); self.btn_underline.clicked.connect(lambda: self.content_edit.insert_markdown("__", "__")); self.btn_strike.clicked.connect(lambda: self.content_edit.insert_markdown("~~", "~~")); self.btn_code.clicked.connect(lambda: self.content_edit.insert_markdown("`", "`")); self.btn_heading.clicked.connect(self.content_edit.toggle_heading)
+        self.btn_bold.clicked.connect(lambda: self.content_edit.insert_markdown("**", "**")); self.btn_italic.clicked.connect(lambda: self.content_edit.insert_markdown("*", "*")); self.btn_underline.clicked.connect(lambda: self.content_edit.insert_markdown("__", "__")); self.btn_strike.clicked.connect(lambda: self.content_edit.insert_markdown("~~", "~~")); self.btn_code.clicked.connect(lambda: self.content_edit.insert_markdown("`", "`")); self.btn_heading.clicked.connect(self.content_edit.toggle_heading); self.btn_list.clicked.connect(self.content_edit.toggle_list)
         self.content_edit.textChanged.connect(self.on_text_changed); self.content_edit.textChanged.connect(self._on_content_text_changed)
         self.category_combo.lineEdit().returnPressed.connect(self.on_category_enter); self.menu_button.clicked.connect(self.show_menu_at_left)
         self.auto_save_timer = QTimer(self); self.auto_save_timer.setSingleShot(True); self.auto_save_timer.setInterval(2000); self.auto_save_timer.timeout.connect(self.save_current_memo); self.content_edit.textChanged.connect(lambda: self.auto_save_timer.start())
