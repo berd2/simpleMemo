@@ -194,6 +194,35 @@ class MarkdownHighlighter(QSyntaxHighlighter):
 
 class CheckboxTextEdit(QTextEdit):
     """QTextEdit with checkbox toggle support and markdown insertion."""
+    def createMimeDataFromSelection(self):
+        from PySide6.QtCore import QMimeData
+        mime = super().createMimeDataFromSelection()
+        cursor = self.textCursor()
+        selected_text = cursor.selectedText().replace('\u2029', '\n')
+        temp = QTextEdit()
+        temp.setMarkdown(selected_text)
+        mime.setHtml(temp.toHtml())
+        return mime
+
+    def insertFromMimeData(self, source):
+        if source.hasHtml():
+            from PySide6.QtGui import QTextDocument
+            temp_doc = QTextDocument()
+            temp_doc.setHtml(source.html())
+
+            # Using QTextDocument.toMarkdown() escapes Markdown characters by default.
+            markdown_text = temp_doc.toMarkdown(QTextDocument.MarkdownDialectCommonMark)
+            markdown_text = markdown_text.replace('\\*', '*').replace('\\#', '#').replace('\\-', '-').replace('\\_', '_').replace('\\~', '~').replace('\\`', '`')
+
+            if markdown_text.endswith('\n\n'):
+                markdown_text = markdown_text[:-2]
+            elif markdown_text.endswith('\n'):
+                markdown_text = markdown_text[:-1]
+
+            self.textCursor().insertText(markdown_text)
+        else:
+            super().insertFromMimeData(source)
+
     def insert_markdown(self, prefix: str, suffix: str = "") -> None:
         cursor = self.textCursor()
         cursor.beginEditBlock()
@@ -325,9 +354,12 @@ class NotepadDialog(QDialog):
         self.new_memo_button = QPushButton("🞧"); self.new_memo_button.setToolTip("새 메모"); self.new_memo_button.setFixedSize(40, 28)
         self.save_button = QPushButton("💾"); self.save_button.setToolTip("저장"); self.save_button.setFixedSize(40, 28)
         self.btn_bold = QPushButton("B"); self.btn_bold.setFixedSize(28, 28); f_b = self.btn_bold.font(); f_b.setBold(True); self.btn_bold.setFont(f_b)
+        self.btn_italic = QPushButton("I"); self.btn_italic.setFixedSize(28, 28); f_i = self.btn_italic.font(); f_i.setItalic(True); self.btn_italic.setFont(f_i)
         self.btn_underline = QPushButton("U"); self.btn_underline.setFixedSize(28, 28); f_u = self.btn_underline.font(); f_u.setUnderline(True); self.btn_underline.setFont(f_u)
+        self.btn_strike = QPushButton("S"); self.btn_strike.setFixedSize(28, 28); f_s = self.btn_strike.font(); f_s.setStrikeOut(True); self.btn_strike.setFont(f_s)
+        self.btn_code = QPushButton("<>"); self.btn_code.setFixedSize(28, 28)
         self.btn_heading = QPushButton("H"); self.btn_heading.setFixedSize(28, 28)
-        self.timestamp_label = QLabel(); self.menu_button = QToolButton(); self.menu_button.setText("☰"); self.menu_button.setFixedSize(28, 28); self.menu_button.setPopupMode(QToolButton.InstantPopup)
+        self.timestamp_label = QLabel(); self.timestamp_label.hide(); self.menu_button = QToolButton(); self.menu_button.setText("☰"); self.menu_button.setFixedSize(28, 28); self.menu_button.setPopupMode(QToolButton.InstantPopup)
         self.menu = QMenu(self); self.content_edit = CheckboxTextEdit(); self.highlighter = MarkdownHighlighter(self.content_edit.document())
 
         self._init_layout(); self._init_connections()
@@ -344,7 +376,7 @@ class NotepadDialog(QDialog):
         left_layout.addWidget(self.category_combo); left_layout.addWidget(self.memo_list_widget)
         right_widget = QWidget(); right_layout = QVBoxLayout(right_widget); right_layout.setContentsMargins(0, 0, 0, 0)
         e_header = QHBoxLayout(); e_header.addWidget(self.up_button); e_header.addWidget(self.down_button); e_header.addWidget(self.new_memo_button); e_header.addWidget(self.save_button); e_header.addSpacing(8)
-        f_layout = QHBoxLayout(); f_layout.setSpacing(2); f_layout.addWidget(self.btn_bold); f_layout.addWidget(self.btn_underline); f_layout.addWidget(self.btn_heading); e_header.addLayout(f_layout); e_header.addStretch(); e_header.addWidget(self.timestamp_label); e_header.addWidget(self.menu_button)
+        f_layout = QHBoxLayout(); f_layout.setSpacing(2); f_layout.addWidget(self.btn_bold); f_layout.addWidget(self.btn_italic); f_layout.addWidget(self.btn_underline); f_layout.addWidget(self.btn_strike); f_layout.addWidget(self.btn_code); f_layout.addWidget(self.btn_heading); e_header.addLayout(f_layout); e_header.addStretch(); e_header.addWidget(self.menu_button)
         right_layout.addLayout(e_header); right_layout.addWidget(self.content_edit)
         splitter.addWidget(left_widget); splitter.addWidget(right_widget); splitter.setSizes([210, 590]); main_layout.addWidget(splitter)
 
@@ -352,7 +384,7 @@ class NotepadDialog(QDialog):
         self.search_button.clicked.connect(self.filter_memos); self.search_edit.returnPressed.connect(self.filter_memos)
         self.new_memo_button.clicked.connect(self.create_new_memo); self.up_button.clicked.connect(self.move_memo_up); self.down_button.clicked.connect(self.move_memo_down); self.undo_button.clicked.connect(self.undo_delete)
         self.memo_list_widget.currentItemChanged.connect(self.on_memo_selected); self.save_button.clicked.connect(self.save_current_memo)
-        self.btn_bold.clicked.connect(lambda: self.content_edit.insert_markdown("**", "**")); self.btn_underline.clicked.connect(lambda: self.content_edit.insert_markdown("__", "__")); self.btn_heading.clicked.connect(self.content_edit.toggle_heading)
+        self.btn_bold.clicked.connect(lambda: self.content_edit.insert_markdown("**", "**")); self.btn_italic.clicked.connect(lambda: self.content_edit.insert_markdown("*", "*")); self.btn_underline.clicked.connect(lambda: self.content_edit.insert_markdown("__", "__")); self.btn_strike.clicked.connect(lambda: self.content_edit.insert_markdown("~~", "~~")); self.btn_code.clicked.connect(lambda: self.content_edit.insert_markdown("`", "`")); self.btn_heading.clicked.connect(self.content_edit.toggle_heading)
         self.content_edit.textChanged.connect(self.on_text_changed); self.content_edit.textChanged.connect(self._on_content_text_changed)
         self.category_combo.lineEdit().returnPressed.connect(self.on_category_enter); self.menu_button.clicked.connect(self.show_menu_at_left)
         self.auto_save_timer = QTimer(self); self.auto_save_timer.setSingleShot(True); self.auto_save_timer.setInterval(2000); self.auto_save_timer.timeout.connect(self.save_current_memo); self.content_edit.textChanged.connect(lambda: self.auto_save_timer.start())
