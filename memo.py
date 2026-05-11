@@ -247,7 +247,7 @@ class CheckboxTextEdit(QTextEdit):
         match = QRegularExpression("^(#{1,6})\\s+(.*)").match(text)
         if match.hasMatch():
             level = len(match.captured(1))
-            if level == 6: cursor.insertText(match.captured(2))
+            if level >= 4: cursor.insertText(match.captured(2))
             else: cursor.insertText(f"{'#' * (level + 1)} {match.captured(2)}")
         else: cursor.insertText(f"# {text}")
         cursor.endEditBlock()
@@ -259,19 +259,27 @@ class CheckboxTextEdit(QTextEdit):
         cursor.movePosition(QTextCursor.StartOfBlock)
         cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
         text = cursor.selectedText()
-        # Toggle bullet point (- )
-        match = QRegularExpression("^(\\s*)-\\s+(.*)").match(text)
+        # Toggle bullet point ( • )
+        match = QRegularExpression("^(\\s*)•\\s+(.*)").match(text)
         if match.hasMatch():
-            cursor.insertText(f"{match.captured(1)}{match.captured(2)}")
+            prefix = match.captured(1)
+            # Remove the single space prefix if it was added just for the bullet
+            if prefix == " ":
+                prefix = ""
+            cursor.insertText(f"{prefix}{match.captured(2)}")
         else:
             # Check if it has spaces
             space_match = QRegularExpression("^(\\s*)(.*)").match(text)
             if space_match.hasMatch() and space_match.captured(2):
-                cursor.insertText(f"{space_match.captured(1)}- {space_match.captured(2)}")
+                # Ensure there's a space before bullet point if it's the start
+                prefix = space_match.captured(1)
+                if not prefix:
+                    prefix = " "
+                cursor.insertText(f"{prefix}• {space_match.captured(2)}")
             elif text:
-                cursor.insertText(f"- {text}")
+                cursor.insertText(f" • {text}")
             else:
-                cursor.insertText("- ")
+                cursor.insertText(" • ")
         cursor.endEditBlock()
         self.setFocus()
 
