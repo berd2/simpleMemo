@@ -199,12 +199,11 @@ class CheckboxTextEdit(QTextEdit):
         mime = super().createMimeDataFromSelection()
         cursor = self.textCursor()
         selected_text = cursor.selectedText().replace('\u2029', '\n')
-        # We don't want to convert to HTML via markdown because of layout issues.
-        # Just creating plain text is usually fine, or we can use the default HTML
-        # and parse it. Since we only support markdown, plain text copy/paste is actually
-        # the safest for internal consistency.
-        # But to support pasting *from* other apps that use rich text, we only handle insert.
-        # Let's revert createMimeDataFromSelection to default (super already sets plain text and basic html).
+        
+        # Use a temporary QTextEdit to convert markdown selection to HTML
+        temp = QTextEdit()
+        temp.setMarkdown(selected_text)
+        mime.setHtml(temp.toHtml())
         return mime
 
     def insertFromMimeData(self, source):
@@ -213,15 +212,11 @@ class CheckboxTextEdit(QTextEdit):
             temp_doc = QTextDocument()
             temp_doc.setHtml(source.html())
 
-            # Use toPlainText() instead of toMarkdown() to avoid extra newlines
-            # and excessive escaping if we just want the text representation.
-            # But the user asked for rich text to be preserved as markdown.
-            # Let's try toMarkdown but clean up the extra newlines caused by blocks.
+            # Using QTextDocument.toMarkdown() escapes Markdown characters by default.
             markdown_text = temp_doc.toMarkdown(QTextDocument.MarkdownDialectCommonMark)
             markdown_text = markdown_text.replace('\\*', '*').replace('\\#', '#').replace('\\-', '-').replace('\\_', '_').replace('\\~', '~').replace('\\`', '`')
 
-            # QTextDocument.toMarkdown() often adds two newlines per paragraph.
-            # For our editor, one newline is usually enough for a new block.
+            # Clean up extra newlines
             markdown_text = markdown_text.replace('\n\n', '\n')
 
             if markdown_text.endswith('\n'):
