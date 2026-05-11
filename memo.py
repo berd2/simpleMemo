@@ -189,7 +189,7 @@ class MarkdownHighlighter(QSyntaxHighlighter):
             base_size = self.base_font.pointSize() if self.base_font.pointSize() > 0 else 10
             size_offset = max(0, 8 - ((level - 1) * 2))
             header_fmt.setFontPointSize(base_size + size_offset)
-            self.setFormat(header_match.capturedStart(1), header_match.capturedLength(1), self.marker_format)
+            self.setFormat(header_match.capturedStart(1), header_match.capturedLength(1) + header_match.capturedLength(2), self.marker_format)
             self.setFormat(header_match.capturedStart(3), header_match.capturedLength(3), header_fmt)
 
 class CheckboxTextEdit(QTextEdit):
