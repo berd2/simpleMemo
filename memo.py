@@ -230,10 +230,164 @@ class CheckboxTextEdit(QTextEdit):
         cursor = self.textCursor()
         if not cursor.hasSelection():
             return
+
+        marker = prefix
+
         cursor.beginEditBlock()
-        text = cursor.selectedText()
-        cursor.removeSelectedText()
-        cursor.insertText(f"{prefix}{text}{suffix}")
+
+        start_pos = cursor.selectionStart()
+        end_pos = cursor.selectionEnd()
+
+        temp_cursor = self.textCursor()
+        temp_cursor.setPosition(start_pos)
+        start_block_num = temp_cursor.blockNumber()
+
+        temp_cursor.setPosition(end_pos)
+        end_block_num = temp_cursor.blockNumber()
+
+        if end_pos > start_pos and temp_cursor.positionInBlock() == 0 and end_block_num > start_block_num:
+            end_block_num -= 1
+
+        import re
+        MARKERS = ["**", "__", "~~", "`", "*", "_"]
+
+        def _apply_format_to_block_text(block_text: str, rel_start: int, rel_end: int, marker: str) -> str:
+            formats = []
+            for m in MARKERS:
+                escaped_m = re.escape(m)
+                if m in ["*", "_"]:
+                    if m == "*":
+                        pattern = r'(?<!\*)(\*)(?!\*)(.*?)(?<!\*)(\*)(?!\*)'
+                    else:
+                        pattern = r'(?<!_)(_)(?!_)(.*?)(?<!_)(_)(?!_)'
+                else:
+                    pattern = f'({escaped_m})(.*?)({escaped_m})'
+
+                for match in re.finditer(pattern, block_text):
+                    formats.append({
+                        "marker": m,
+                        "start": match.start(1),
+                        "inner_start": match.start(2),
+                        "inner_end": match.end(2),
+                        "end": match.end(3) if len(match.groups()) >= 3 else match.end()
+                    })
+
+            formats.sort(key=lambda x: (x["start"], -x["end"]))
+
+            markers_to_remove = []
+            markers_to_insert = []
+
+            toggling_off = False
+
+            for f in formats:
+                if f["marker"] == marker:
+                    is_exact_outer = (f["start"] == rel_start and f["end"] == rel_end)
+                    is_exact_inner = (f["inner_start"] == rel_start and f["inner_end"] == rel_end)
+                    is_enclosing = (f["inner_start"] <= rel_start and f["inner_end"] >= rel_end)
+
+                    if is_exact_outer or is_exact_inner or is_enclosing:
+                        toggling_off = True
+                        break
+
+            for f in formats:
+                m_start_marker = (f["start"], f["inner_start"])
+                m_end_marker = (f["inner_end"], f["end"])
+
+                # 1. ENCLOSING
+                if f["start"] <= rel_start and f["end"] >= rel_end:
+                    is_exact_outer = (f["start"] == rel_start and f["end"] == rel_end)
+                    is_exact_inner = (f["inner_start"] == rel_start and f["inner_end"] == rel_end)
+
+                    if is_exact_outer or is_exact_inner:
+                        markers_to_remove.append(m_start_marker)
+                        markers_to_remove.append(m_end_marker)
+                    elif f["inner_start"] <= rel_start and f["inner_end"] >= rel_end:
+                        if rel_start > f["inner_start"]:
+                            markers_to_insert.append((rel_start, f["marker"], "end"))
+                        else:
+                            markers_to_remove.append(m_start_marker)
+
+                        if rel_end < f["inner_end"]:
+                            markers_to_insert.append((rel_end, f["marker"], "start"))
+                        else:
+                            markers_to_remove.append(m_end_marker)
+                    elif f["start"] == rel_start:
+                        markers_to_remove.append(m_start_marker)
+                        markers_to_insert.append((rel_end, f["marker"], "start"))
+                    elif f["end"] == rel_end:
+                        markers_to_remove.append(m_end_marker)
+                        markers_to_insert.append((rel_start, f["marker"], "end"))
+
+                # 2. COMPLETELY INSIDE
+                elif f["start"] >= rel_start and f["end"] <= rel_end:
+                    markers_to_remove.append(m_start_marker)
+                    markers_to_remove.append(m_end_marker)
+
+                # 3. OVERLAPPING LEFT
+                elif f["start"] < rel_start and f["end"] > rel_start and f["end"] <= rel_end:
+                    markers_to_remove.append(m_end_marker)
+                    markers_to_insert.append((rel_start, f["marker"], "end"))
+
+                # 4. OVERLAPPING RIGHT
+                elif f["start"] >= rel_start and f["start"] < rel_end and f["end"] > rel_end:
+                    markers_to_remove.append(m_start_marker)
+                    markers_to_insert.append((rel_end, f["marker"], "start"))
+
+            if not toggling_off:
+                markers_to_insert.append((rel_start, marker, "start"))
+                markers_to_insert.append((rel_end, marker, "end"))
+
+            res = ""
+            idx = 0
+            markers_to_insert.sort(key=lambda x: (x[0], 0 if x[2] == "end" else 1))
+
+            remove_indices = set()
+            for start_idx, end_idx in markers_to_remove:
+                for i in range(start_idx, end_idx):
+                    remove_indices.add(i)
+
+            while idx <= len(block_text):
+                while markers_to_insert and markers_to_insert[0][0] == idx:
+                    res += markers_to_insert[0][1]
+                    markers_to_insert.pop(0)
+
+                if idx < len(block_text):
+                    if idx not in remove_indices:
+                        res += block_text[idx]
+                idx += 1
+
+            return res
+
+        for i in range(end_block_num, start_block_num - 1, -1):
+            block = self.document().findBlockByNumber(i)
+            block_pos = block.position()
+            block_len = block.length() - 1 # exclude newline
+
+            # Determine the selection boundaries within this block
+            if i == start_block_num and i == end_block_num:
+                rel_start = start_pos - block_pos
+                rel_end = end_pos - block_pos
+            elif i == start_block_num:
+                rel_start = start_pos - block_pos
+                rel_end = block_len
+            elif i == end_block_num:
+                rel_start = 0
+                rel_end = end_pos - block_pos
+            else:
+                rel_start = 0
+                rel_end = block_len
+
+            if rel_start == rel_end:
+                continue
+
+            block_text = block.text()
+            new_text = _apply_format_to_block_text(block_text, rel_start, rel_end, marker)
+
+            temp_cursor = self.textCursor()
+            temp_cursor.setPosition(block_pos)
+            temp_cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+            temp_cursor.insertText(new_text)
+
         cursor.endEditBlock()
         self.setFocus()
 
@@ -243,12 +397,47 @@ class CheckboxTextEdit(QTextEdit):
         cursor.movePosition(QTextCursor.StartOfBlock)
         cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
         text = cursor.selectedText()
-        match = QRegularExpression("^(#{1,6})\\s+(.*)").match(text)
+
+        # Clear inline formatting first
+        MARKERS = ["**", "__", "~~", "`", "*", "_"]
+        import re
+        formats = []
+        for m in MARKERS:
+            escaped_m = re.escape(m)
+            if m in ["*", "_"]:
+                if m == "*":
+                    pattern = r'(?<!\*)(\*)(?!\*)(.*?)(?<!\*)(\*)(?!\*)'
+                else:
+                    pattern = r'(?<!_)(_)(?!_)(.*?)(?<!_)(_)(?!_)'
+            else:
+                pattern = f'({escaped_m})(.*?)({escaped_m})'
+
+            for fmt_match in re.finditer(pattern, text):
+                formats.append({
+                    "start": fmt_match.start(1),
+                    "inner_start": fmt_match.start(2),
+                    "inner_end": fmt_match.end(2),
+                    "end": fmt_match.end(3) if len(fmt_match.groups()) >= 3 else fmt_match.end()
+                })
+
+        remove_indices = set()
+        for f in formats:
+            for i in range(f["start"], f["inner_start"]):
+                remove_indices.add(i)
+            for i in range(f["inner_end"], f["end"]):
+                remove_indices.add(i)
+
+        clean_text = ""
+        for i in range(len(text)):
+            if i not in remove_indices:
+                clean_text += text[i]
+
+        match = QRegularExpression("^(#{1,6})\\s+(.*)").match(clean_text)
         if match.hasMatch():
             level = len(match.captured(1))
             if level >= 4: cursor.insertText(match.captured(2))
             else: cursor.insertText(f"{'#' * (level + 1)} {match.captured(2)}")
-        else: cursor.insertText(f"# {text}")
+        else: cursor.insertText(f"# {clean_text}")
         cursor.endEditBlock()
         self.setFocus()
 
@@ -276,13 +465,13 @@ class CheckboxTextEdit(QTextEdit):
             temp_cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
             text = temp_cursor.selectedText()
 
-            # Toggle bullet point ( • )
-            match = QRegularExpression("^(\\s*)•\\s+(.*)").match(text)
+            # Toggle list marker ( •, -, *, + )
+            match = QRegularExpression("^(\\s*)([-*+•])\\s+(.*)").match(text)
             if match.hasMatch():
                 prefix = match.captured(1)
                 if prefix == " ":
                     prefix = ""
-                temp_cursor.insertText(f"{prefix}{match.captured(2)}")
+                temp_cursor.insertText(f"{prefix}{match.captured(3)}")
             else:
                 space_match = QRegularExpression("^(\\s*)(.*)").match(text)
                 if space_match.hasMatch() and space_match.captured(2):
@@ -304,7 +493,7 @@ class CheckboxTextEdit(QTextEdit):
             block = cursor.block()
             text = block.text()
 
-            match = QRegularExpression("^(\\s*•\\s+)").match(text)
+            match = QRegularExpression("^(\\s*[-*+•]\\s+)").match(text)
             if match.hasMatch() and cursor.positionInBlock() >= len(match.captured(1)):
                 if text == match.captured(1):
                     cursor.movePosition(QTextCursor.StartOfBlock)
