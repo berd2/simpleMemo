@@ -231,136 +231,163 @@ class CheckboxTextEdit(QTextEdit):
         if not cursor.hasSelection():
             return
 
-        # We assume prefix == suffix for simplicity (**, __, ~~, etc)
-        # If prefix != suffix (e.g. ``, we only use prefix as marker)
         marker = prefix
 
         cursor.beginEditBlock()
 
-        # Process the entire block containing the selection to properly parse formats
         start_pos = cursor.selectionStart()
         end_pos = cursor.selectionEnd()
 
-        block = cursor.block()
-        block_pos = block.position()
-        block_text = block.text()
+        temp_cursor = self.textCursor()
+        temp_cursor.setPosition(start_pos)
+        start_block_num = temp_cursor.blockNumber()
 
-        rel_start = start_pos - block_pos
-        rel_end = end_pos - block_pos
+        temp_cursor.setPosition(end_pos)
+        end_block_num = temp_cursor.blockNumber()
 
-        MARKERS = ["**", "__", "~~", "`", "*", "_"]
-        formats = []
+        if end_pos > start_pos and temp_cursor.positionInBlock() == 0 and end_block_num > start_block_num:
+            end_block_num -= 1
+
         import re
-        for m in MARKERS:
-            escaped_m = re.escape(m)
-            if m in ["*", "_"]:
-                if m == "*":
-                    pattern = r'(?<!\*)(\*)(?!\*)(.*?)(?<!\*)(\*)(?!\*)'
+        MARKERS = ["**", "__", "~~", "`", "*", "_"]
+
+        def _apply_format_to_block_text(block_text: str, rel_start: int, rel_end: int, marker: str) -> str:
+            formats = []
+            for m in MARKERS:
+                escaped_m = re.escape(m)
+                if m in ["*", "_"]:
+                    if m == "*":
+                        pattern = r'(?<!\*)(\*)(?!\*)(.*?)(?<!\*)(\*)(?!\*)'
+                    else:
+                        pattern = r'(?<!_)(_)(?!_)(.*?)(?<!_)(_)(?!_)'
                 else:
-                    pattern = r'(?<!_)(_)(?!_)(.*?)(?<!_)(_)(?!_)'
-            else:
-                pattern = f'({escaped_m})(.*?)({escaped_m})'
+                    pattern = f'({escaped_m})(.*?)({escaped_m})'
 
-            for match in re.finditer(pattern, block_text):
-                formats.append({
-                    "marker": m,
-                    "start": match.start(1),
-                    "inner_start": match.start(2),
-                    "inner_end": match.end(2),
-                    "end": match.end(3) if len(match.groups()) >= 3 else match.end()
-                })
+                for match in re.finditer(pattern, block_text):
+                    formats.append({
+                        "marker": m,
+                        "start": match.start(1),
+                        "inner_start": match.start(2),
+                        "inner_end": match.end(2),
+                        "end": match.end(3) if len(match.groups()) >= 3 else match.end()
+                    })
 
-        formats.sort(key=lambda x: (x["start"], -x["end"]))
+            formats.sort(key=lambda x: (x["start"], -x["end"]))
 
-        markers_to_remove = []
-        markers_to_insert = []
+            markers_to_remove = []
+            markers_to_insert = []
 
-        toggling_off = False
+            toggling_off = False
 
-        for f in formats:
-            if f["marker"] == marker:
-                is_exact_outer = (f["start"] == rel_start and f["end"] == rel_end)
-                is_exact_inner = (f["inner_start"] == rel_start and f["inner_end"] == rel_end)
-                is_enclosing = (f["inner_start"] <= rel_start and f["inner_end"] >= rel_end)
+            for f in formats:
+                if f["marker"] == marker:
+                    is_exact_outer = (f["start"] == rel_start and f["end"] == rel_end)
+                    is_exact_inner = (f["inner_start"] == rel_start and f["inner_end"] == rel_end)
+                    is_enclosing = (f["inner_start"] <= rel_start and f["inner_end"] >= rel_end)
 
-                if is_exact_outer or is_exact_inner or is_enclosing:
-                    toggling_off = True
-                    break
+                    if is_exact_outer or is_exact_inner or is_enclosing:
+                        toggling_off = True
+                        break
 
-        for f in formats:
-            m_start_marker = (f["start"], f["inner_start"])
-            m_end_marker = (f["inner_end"], f["end"])
+            for f in formats:
+                m_start_marker = (f["start"], f["inner_start"])
+                m_end_marker = (f["inner_end"], f["end"])
 
-            # 1. ENCLOSING
-            if f["start"] <= rel_start and f["end"] >= rel_end:
-                is_exact_outer = (f["start"] == rel_start and f["end"] == rel_end)
-                is_exact_inner = (f["inner_start"] == rel_start and f["inner_end"] == rel_end)
+                # 1. ENCLOSING
+                if f["start"] <= rel_start and f["end"] >= rel_end:
+                    is_exact_outer = (f["start"] == rel_start and f["end"] == rel_end)
+                    is_exact_inner = (f["inner_start"] == rel_start and f["inner_end"] == rel_end)
 
-                if is_exact_outer or is_exact_inner:
+                    if is_exact_outer or is_exact_inner:
+                        markers_to_remove.append(m_start_marker)
+                        markers_to_remove.append(m_end_marker)
+                    elif f["inner_start"] <= rel_start and f["inner_end"] >= rel_end:
+                        if rel_start > f["inner_start"]:
+                            markers_to_insert.append((rel_start, f["marker"], "end"))
+                        else:
+                            markers_to_remove.append(m_start_marker)
+
+                        if rel_end < f["inner_end"]:
+                            markers_to_insert.append((rel_end, f["marker"], "start"))
+                        else:
+                            markers_to_remove.append(m_end_marker)
+                    elif f["start"] == rel_start:
+                        markers_to_remove.append(m_start_marker)
+                        markers_to_insert.append((rel_end, f["marker"], "start"))
+                    elif f["end"] == rel_end:
+                        markers_to_remove.append(m_end_marker)
+                        markers_to_insert.append((rel_start, f["marker"], "end"))
+
+                # 2. COMPLETELY INSIDE
+                elif f["start"] >= rel_start and f["end"] <= rel_end:
                     markers_to_remove.append(m_start_marker)
                     markers_to_remove.append(m_end_marker)
-                elif f["inner_start"] <= rel_start and f["inner_end"] >= rel_end:
-                    if rel_start > f["inner_start"]:
-                        markers_to_insert.append((rel_start, f["marker"], "end"))
-                    else:
-                        markers_to_remove.append(m_start_marker)
 
-                    if rel_end < f["inner_end"]:
-                        markers_to_insert.append((rel_end, f["marker"], "start"))
-                    else:
-                        markers_to_remove.append(m_end_marker)
-                elif f["start"] == rel_start:
-                    markers_to_remove.append(m_start_marker)
-                    markers_to_insert.append((rel_end, f["marker"], "start"))
-                elif f["end"] == rel_end:
+                # 3. OVERLAPPING LEFT
+                elif f["start"] < rel_start and f["end"] > rel_start and f["end"] <= rel_end:
                     markers_to_remove.append(m_end_marker)
                     markers_to_insert.append((rel_start, f["marker"], "end"))
 
-            # 2. COMPLETELY INSIDE
-            elif f["start"] >= rel_start and f["end"] <= rel_end:
-                markers_to_remove.append(m_start_marker)
-                markers_to_remove.append(m_end_marker)
+                # 4. OVERLAPPING RIGHT
+                elif f["start"] >= rel_start and f["start"] < rel_end and f["end"] > rel_end:
+                    markers_to_remove.append(m_start_marker)
+                    markers_to_insert.append((rel_end, f["marker"], "start"))
 
-            # 3. OVERLAPPING LEFT
-            elif f["start"] < rel_start and f["end"] > rel_start and f["end"] <= rel_end:
-                markers_to_remove.append(m_end_marker)
-                markers_to_insert.append((rel_start, f["marker"], "end"))
+            if not toggling_off:
+                markers_to_insert.append((rel_start, marker, "start"))
+                markers_to_insert.append((rel_end, marker, "end"))
 
-            # 4. OVERLAPPING RIGHT
-            elif f["start"] >= rel_start and f["start"] < rel_end and f["end"] > rel_end:
-                markers_to_remove.append(m_start_marker)
-                markers_to_insert.append((rel_end, f["marker"], "start"))
+            res = ""
+            idx = 0
+            markers_to_insert.sort(key=lambda x: (x[0], 0 if x[2] == "end" else 1))
 
-        if not toggling_off:
-            markers_to_insert.append((rel_start, marker, "start"))
-            markers_to_insert.append((rel_end, marker, "end"))
+            remove_indices = set()
+            for start_idx, end_idx in markers_to_remove:
+                for i in range(start_idx, end_idx):
+                    remove_indices.add(i)
 
-        res = ""
-        idx = 0
-        markers_to_insert.sort(key=lambda x: (x[0], 0 if x[2] == "end" else 1))
+            while idx <= len(block_text):
+                while markers_to_insert and markers_to_insert[0][0] == idx:
+                    res += markers_to_insert[0][1]
+                    markers_to_insert.pop(0)
 
-        remove_indices = set()
-        for start_idx, end_idx in markers_to_remove:
-            for i in range(start_idx, end_idx):
-                remove_indices.add(i)
+                if idx < len(block_text):
+                    if idx not in remove_indices:
+                        res += block_text[idx]
+                idx += 1
 
-        while idx <= len(block_text):
-            while markers_to_insert and markers_to_insert[0][0] == idx:
-                res += markers_to_insert[0][1]
-                markers_to_insert.pop(0)
+            return res
 
-            if idx < len(block_text):
-                if idx not in remove_indices:
-                    res += block_text[idx]
-            idx += 1
+        for i in range(end_block_num, start_block_num - 1, -1):
+            block = self.document().findBlockByNumber(i)
+            block_pos = block.position()
+            block_len = block.length() - 1 # exclude newline
 
-        # Replace the entire block text
-        temp_cursor = self.textCursor()
-        temp_cursor.setPosition(block_pos)
-        temp_cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
-        temp_cursor.insertText(res)
+            # Determine the selection boundaries within this block
+            if i == start_block_num and i == end_block_num:
+                rel_start = start_pos - block_pos
+                rel_end = end_pos - block_pos
+            elif i == start_block_num:
+                rel_start = start_pos - block_pos
+                rel_end = block_len
+            elif i == end_block_num:
+                rel_start = 0
+                rel_end = end_pos - block_pos
+            else:
+                rel_start = 0
+                rel_end = block_len
 
-        # Restore selection appropriately if possible, but for simplicity we just collapse
+            if rel_start == rel_end:
+                continue
+
+            block_text = block.text()
+            new_text = _apply_format_to_block_text(block_text, rel_start, rel_end, marker)
+
+            temp_cursor = self.textCursor()
+            temp_cursor.setPosition(block_pos)
+            temp_cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+            temp_cursor.insertText(new_text)
+
         cursor.endEditBlock()
         self.setFocus()
 
